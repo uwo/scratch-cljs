@@ -67,6 +67,46 @@
                  (apply dissoc requests-by-order-n ready-ns)
                  (apply dissoc responses-by-order-n ready-ns)))))))
 
+(defn start-queuing-loop3
+  [worker req-chan res-chan]
+  (prn "Starting queuing loop 3")
+  (a/go-loop [order-n 0
+              requests-by-order-n (sorted-map)
+              responses-by-order-n (sorted-map)]
+    (let [[the-val the-chan] (a/alts! [req-chan res-chan])]
+      (cond
+        ;; A job was requested:
+        (and (= the-chan req-chan) (some? the-val))
+        (let [_ (prn "A job was requested:" order-n)
+              result-chan (:result-chan the-val)
+              msg (-> the-val
+                      (dissoc :result-chan)
+                      (assoc :order-n order-n))]
+          (post-message worker msg)
+          (recur (inc order-n)
+                 (assoc requests-by-order-n order-n result-chan)
+                 responses-by-order-n))
+        ;; A job completed:
+        (and (= the-chan res-chan) (some? the-val))
+        (let [res-order-n (:order-n the-val)
+              next-order-n (ffirst requests-by-order-n)
+              responses-by-order-n (assoc responses-by-order-n res-order-n the-val)
+              {:keys [reqs ress]} (loop [n next-order-n
+                                         reqs requests-by-order-n
+                                         ress responses-by-order-n]
+                                    ;; Check if there's a response for the next-n:
+                                    (if-let [response (get responses-by-order-n n)]
+                                      (let [result-chan (get requests-by-order-n n)]
+                                        (a/>! result-chan (dissoc response :order-n))
+                                        ;; See if the next one has already completed:
+                                        (recur (inc n)
+                                               (dissoc reqs n)
+                                               (dissoc ress n)))
+                                      ;; Can't post any more results, return where we left off
+                                      {:reqs reqs
+                                       :ress ress}))]
+          (recur order-n reqs ress))))))
+
 (defn request-job
   ;; Queue the request to enforce order, as opposed to calling
   ;; post-message on the worker directly.
