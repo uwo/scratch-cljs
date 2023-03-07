@@ -141,6 +141,8 @@
 
   (start-queuing-loop2 worker req-chan res-chan)
 
+  (start-queuing-loop3 worker req-chan res-chan)
+
   ;; Do something with the result:
   (a/go
     (let [res (a/<! (request-job req-chan {:type :validate :data "hello world"}))]

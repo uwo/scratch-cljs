@@ -25,8 +25,9 @@
       (let [transit-request-data (.. e -data)
             request-data (t/read treader transit-request-data)
             response-data (handle-message request-data)
-            transit-response-data (t/write twriter response-data)
-            random-wait (* 1000 (inc (rand-int 2)))]
+            random-wait (* 1000 (inc (rand-int 10)))
+            response-data (assoc response-data :random-wait random-wait)
+            transit-response-data (t/write twriter response-data)]
         (js/setTimeout (fn []
                          (js/postMessage transit-response-data))
                        random-wait))))))
