@@ -20,17 +20,21 @@
   (a/go
     (loop []
       (when-let [req (a/<! req-chan)]
-        (post-message worker req)
-        (when-let [res (a/<! res-chan)]
-          ;; handle response
-          (prn "handling response" res)
-          (recur))))))
+        (let [result-chan (:result-chan req)]
+          (post-message worker (dissoc req :result-chan))
+          (when-let [res (a/<! res-chan)]
+            ;; put response on the promise-chan provided by the requester:
+            (prn "handling response" res)
+            (a/>! result-chan res)
+            (recur)))))))
 
 (defn request-job
   ;; Queue the request to enforce order, as opposed to calling
   ;; post-message on the worker directly.
   [req-chan job]
-  (a/put! req-chan job))
+  (let [result-chan (a/promise-chan)]
+    (a/put! req-chan (assoc job :result-chan result-chan))
+    result-chan))
 
 (defn create-worker
   [{:keys [worker-file res-chan req-chan]}]
@@ -56,9 +60,12 @@
 
   (start-queuing-loop worker req-chan res-chan)
 
-  (request-job req-chan {:type :validate :data "hello world"})
+  ;; Do something with the result:
+  (a/go
+    (let [res (a/<! (request-job req-chan {:type :validate :data "hello world"}))]
+      (prn "do something with result" res)))
 
-  ;; Note that response handlers are in order
+  ;; Note that handling of responses is in order:
   (dotimes [n 10]
     (request-job req-chan {:type :validate :data "hello world" :n n}))
 
