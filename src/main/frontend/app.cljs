@@ -15,6 +15,10 @@
 (defonce twriter (t/writer :json))
 (defonce treader (t/reader :json))
 
+(defn post-message
+  [worker message]
+  (.postMessage worker (t/write twriter message)))
+
 (defn create-worker
   ([]
    (create-worker "/js/worker.js"))
@@ -22,16 +26,14 @@
    (let [worker (js/Worker. worker-file)
          echo-handler (fn [e] (prn (t/read treader (.. e -data))))]
      (.. worker (addEventListener "message" echo-handler))
+     (post-message worker {:type :init :data "some init data"})
      worker)))
-
-(defn post-message
-  [worker message]
-  (.postMessage worker (t/write twriter message)))
 
 (defn init []
   (println "Hello World")
   (let [worker (create-worker)]
-    (post-message worker {:test "hello world"})))
+    (post-message worker {:type :validate
+                          :test "hello world"})))
 
 ;; Example from https://shadow-cljs.github.io/docs/UsersGuide.html#_web_workers
 ;; (defn init []
