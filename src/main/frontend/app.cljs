@@ -1,16 +1,11 @@
 (ns frontend.app
+  ;; Used https://shadow-cljs.github.io/docs/UsersGuide.html#_web_workers
   (:require [cljs.core.async :as a]
             [cognitect.transit :as t]))
 
-(def submit-chan (a/chan))
+(def req-chan (a/chan))
 
-(defn start-loop
-  [submit-chan]
-  (a/go
-    (loop []
-      (when-let [submission (a/<! submit-chan)]
-        (prn "received" submission)
-        (recur)))))
+(def res-chan (a/chan))
 
 (defonce twriter (t/writer :json))
 (defonce treader (t/reader :json))
@@ -19,51 +14,52 @@
   [worker message]
   (.postMessage worker (t/write twriter message)))
 
+(defn start-queuing-loop
+  [worker req-chan res-chan]
+  (prn "Starting queuing loop")
+  (a/go
+    (loop []
+      (when-let [req (a/<! req-chan)]
+        (post-message worker req)
+        (when-let [res (a/<! res-chan)]
+          ;; handle response
+          (prn "handling response" res)
+          (recur))))))
+
+(defn request-job
+  ;; Queue the request to enforce order, as opposed to calling
+  ;; post-message on the worker directly.
+  [req-chan job]
+  (a/put! req-chan job))
+
 (defn create-worker
-  ([]
-   (create-worker "/js/worker.js"))
-  ([worker-file]
-   (let [worker (js/Worker. worker-file)
-         echo-handler (fn [e] (prn (t/read treader (.. e -data))))]
-     (.. worker (addEventListener "message" echo-handler))
-     (post-message worker {:type :init :data "some init data"})
-     worker)))
+  [{:keys [worker-file res-chan req-chan]}]
+  (let [worker (js/Worker. worker-file)]
+    (.addEventListener worker "message" (fn [e] (a/put! res-chan (t/read treader (.. e -data)))))
+    (request-job req-chan {:type :init :data "some init data"})
+    worker))
 
 (defn init []
   (println "Hello World")
-  (let [worker (create-worker)]
-    (post-message worker {:type :validate
-                          :test "hello world"})))
-
-;; Example from https://shadow-cljs.github.io/docs/UsersGuide.html#_web_workers
-;; (defn init []
-;;   (let [worker (js/Worker. "/js/worker.js")]
-;;     (.. worker (addEventListener "message" (fn [e] (js/console.log e))))
-;;     (.. worker (postMessage "hello world"))))
+  ;; Uncomment to test on refresh testing
+  #_(let [worker (create-worker {:worker-file "/js/worker.js"
+                                 :req-chan req-chan
+                                 :res-chan res-chan})]
+      (start-queuing-loop worker req-chan res-chan)
+    (request-job req-chan {:type :validate :data "hello world"})))
 
 (comment
-  (prn "test")
+  (def worker
+    (create-worker {:worker-file "/js/worker.js"
+                    :req-chan req-chan
+                    :res-chan res-chan}))
 
-  (test-roundtrip)
+  (start-queuing-loop worker req-chan res-chan)
 
-  (start-loop submit-chan)
-  (a/put! submit-chan {:test 'asdf})
+  (request-job req-chan {:type :validate :data "hello world"})
 
-  (t/write twriter {:test "hello world"})
+  ;; Note that response handlers are in order
+  (dotimes [n 10]
+    (request-job req-chan {:type :validate :data "hello world" :n n}))
 
   )
-
-;; Test that transit is working
-(defn roundtrip [x]
-  (let [w (t/writer :json)
-        r (t/reader :json)]
-    (t/read r (t/write w x))))
-
-(defn test-roundtrip []
-  (let [list1 [:red :green :blue]
-        list2 [:apple :pear :grape]
-        data  {(t/integer 1) list1
-               (t/integer 2) list2}
-        data' (roundtrip data)]
-    (prn data)
-    (assert (= data data'))))

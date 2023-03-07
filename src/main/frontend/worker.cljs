@@ -1,10 +1,6 @@
 (ns frontend.worker
   (:require [cognitect.transit :as t]))
 
-;(defonce twriter (t/writer :json))
-;
-;(defonce treader (t/reader :json))
-
 (defn mock-data [] {:abc 123})
 
 (defmulti handle-message :type)
